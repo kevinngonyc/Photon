@@ -8,10 +8,14 @@
 import SwiftUI
 import UIKit
 
-let rows = 17
-let columns = 17
+struct BoardView<Header: View>: View {
+    var game: PhotonGame
+    /// How far views below overlap the bottom of the board area; the board stays clear of it.
+    var bottomOverlap: CGFloat = 0
+    /// Room kept just above the board for `header`; the two are centered together.
+    var headerHeight: CGFloat = 0
+    @ViewBuilder var header: Header
 
-struct BoardView: View {
     @State private var scale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
 
@@ -20,30 +24,24 @@ struct BoardView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let layout = BoardLayout(containerSize: geometry.size, bottomOverlap: bottomOverlap, topInset: headerHeight,
+                                     cells: game.board.size, scale: scale, offset: offset)
             ZStack (alignment: .bottomTrailing) {
-                Grid(horizontalSpacing: 1.0, verticalSpacing: 1.0) {
-                    ForEach(0..<rows, id: \.self) { row in
-                        GridRow {
-                            ForEach(0..<columns, id: \.self) { col in
-                                Rectangle()
-                                    .fill((row + col) % 2 == 0 ? Color.boardTileA : Color.boardTileB)
-                                    .frame(width: geometry.size.width / 18.0, height: geometry.size.width / 18.0)
-                            }
-                        }
-                    }
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .scaleEffect(scale)
-                .offset(offset)
+                ZoomedBoard(scene: BoardScene(game: game), layout: layout)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
 
-                // Handles pinch-to-zoom (anchored to pinch point) and
-                // 1- or 2-finger pan, composed correctly when simultaneous.
+                // Handles pinch-to-zoom (anchored to pinch point),
+                // 1- or 2-finger pan, composed correctly when simultaneous,
+                // and taps on squares.
                 PinchPanGestureView(
                     scale: $scale,
                     offset: $offset,
                     containerSize: geometry.size,
                     minScale: minScale,
-                    maxScale: maxScale
+                    maxScale: maxScale,
+                    onTap: { point in
+                        if let cell = layout.cell(at: point) { game.tap(cell) }
+                    }
                 )
                 if scale != 1.0 {
                     Button(action: {
@@ -79,8 +77,11 @@ struct BoardView: View {
                     .padding(.trailing, 16)
                 }
             }
-            
-            
+            .overlay(alignment: .top) {
+                header
+                    .frame(height: headerHeight)
+                    .padding(.top, max(0, layout.origin.y - headerHeight))
+            }
         }
         .clipped()
         
@@ -95,6 +96,7 @@ struct PinchPanGestureView: UIViewRepresentable {
     var containerSize: CGSize
     var minScale: CGFloat
     var maxScale: CGFloat
+    var onTap: (CGPoint) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(scale: $scale, offset: $offset)
@@ -121,6 +123,13 @@ struct PinchPanGestureView: UIViewRepresentable {
         pan.delegate = context.coordinator
         view.addGestureRecognizer(pan)
 
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
+        tap.delegate = context.coordinator
+        view.addGestureRecognizer(tap)
+
         return view
     }
 
@@ -130,6 +139,7 @@ struct PinchPanGestureView: UIViewRepresentable {
         context.coordinator.containerSize = containerSize
         context.coordinator.minScale = minScale
         context.coordinator.maxScale = maxScale
+        context.coordinator.onTap = onTap
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
@@ -138,6 +148,7 @@ struct PinchPanGestureView: UIViewRepresentable {
         var containerSize: CGSize = .zero
         var minScale: CGFloat = 1.0
         var maxScale: CGFloat = 6.0
+        var onTap: (CGPoint) -> Void = { _ in }
 
         init(scale: Binding<CGFloat>, offset: Binding<CGSize>) {
             self.scale = scale
@@ -209,6 +220,12 @@ struct PinchPanGestureView: UIViewRepresentable {
             }
         }
 
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            if gesture.state == .ended {
+                onTap(gesture.location(in: gesture.view))
+            }
+        }
+
         private func snapBack() {
             let target = clampedOffset(offset.wrappedValue, scale: scale.wrappedValue, in: containerSize)
             withAnimation(.snappy) {
@@ -253,6 +270,276 @@ private extension Comparable {
     }
 }
 
+// MARK: - Geometry
+
+/// Where squares sit in the view. The board is drawn unzoomed and the zoom applied as a
+/// transform about the view's center, matching what scaleEffect + offset would do.
+private struct BoardLayout {
+    let containerSize: CGSize
+    let bottomOverlap: CGFloat
+    var topInset: CGFloat = 0
+    let cells: Int
+    var scale: CGFloat
+    var offset: CGSize
+
+    private var visibleHeight: CGFloat { max(0, containerSize.height - bottomOverlap) }
+    var cellSize: CGFloat { max(1, floor((min(containerSize.width, visibleHeight - topInset) - 8) / CGFloat(cells))) }
+    var center: CGPoint { CGPoint(x: containerSize.width / 2, y: containerSize.height / 2) }
+    var origin: CGPoint {
+        let side = cellSize * CGFloat(cells)
+        return CGPoint(x: ((containerSize.width - side) / 2).rounded(),
+                       y: ((visibleHeight - topInset - side) / 2).rounded() + topInset)
+    }
+
+    func rect(_ cell: Int) -> CGRect {
+        CGRect(x: origin.x + CGFloat(cell % cells) * cellSize, y: origin.y + CGFloat(cell / cells) * cellSize,
+               width: cellSize, height: cellSize)
+    }
+
+    func center(row: Int, col: Int) -> CGPoint {
+        CGPoint(x: origin.x + (CGFloat(col) + 0.5) * cellSize, y: origin.y + (CGFloat(row) + 0.5) * cellSize)
+    }
+
+    func center(of cell: Int) -> CGPoint { center(row: cell / cells, col: cell % cells) }
+
+    /// The square under a point in the (zoomed) view.
+    func cell(at point: CGPoint) -> Int? {
+        let x = (point.x - center.x - offset.width) / scale + center.x
+        let y = (point.y - center.y - offset.height) / scale + center.y
+        let col = Int(floor((x - origin.x) / cellSize)), row = Int(floor((y - origin.y) / cellSize))
+        guard row >= 0, row < cells, col >= 0, col < cells else { return nil }
+        return row * cells + col
+    }
+}
+
+// MARK: - Drawing
+
+/// The board drawn at a given zoom. Animatable, so zoom and snap-back animations interpolate
+/// while the canvas redraws crisply at every scale.
+private struct ZoomedBoard: View, Animatable {
+    let scene: BoardScene
+    var layout: BoardLayout
+
+    var animatableData: AnimatablePair<CGFloat, CGSize.AnimatableData> {
+        get { AnimatablePair(layout.scale, layout.offset.animatableData) }
+        set {
+            layout.scale = newValue.first
+            layout.offset.animatableData = newValue.second
+        }
+    }
+
+    var body: some View {
+        Canvas { [scene, layout] context, _ in
+            scene.draw(in: &context, layout: layout)
+        }
+    }
+}
+
+/// Everything the board draws, read from the game in `body` so SwiftUI tracks it.
+private struct BoardScene {
+    let board: Board
+    let moat: [Bool]
+    let dots: Set<Int>
+    let dotColor: Color
+    let ghosts: [Removal]
+    let lastMove: Int?
+
+    init(game: PhotonGame) {
+        board = game.board
+        moat = game.board.moat()
+        dots = game.isLocalTurn ? game.legalCells : []
+        dotColor = .seat(game.activeSeat)
+        ghosts = game.ghosts
+        lastMove = game.lastMove
+    }
+
+    private static let laserInk = Color(hex: 0xFF6B8A)
+    private static let diffuserInk = Color(hex: 0x7DD3FC)
+
+    func draw(in context: inout GraphicsContext, layout: BoardLayout) {
+        context.translateBy(x: layout.center.x + layout.offset.width, y: layout.center.y + layout.offset.height)
+        context.scaleBy(x: layout.scale, y: layout.scale)
+        context.translateBy(x: -layout.center.x, y: -layout.center.y)
+
+        let n = board.size, cs = layout.cellSize
+        for cell in 0..<n * n {
+            let tile = Path(layout.rect(cell).insetBy(dx: 0.5, dy: 0.5))
+            context.fill(tile, with: .color((cell / n + cell % n) % 2 == 0 ? .boardTileA : .boardTileB))
+            if board.killzone[cell] {
+                context.fill(tile, with: .color(.gridRed.opacity(0.32)))
+            } else if board.grid[cell] == nil {
+                let lit = board.lit[cell]
+                if !lit.isEmpty { context.fill(tile, with: .color(Self.lightColor(lit).opacity(0.24))) }
+                if moat[cell] { context.fill(tile, with: .color(.black.opacity(0.18))) }
+            }
+        }
+        drawCoordinates(in: &context, layout: layout)
+        drawBeams(in: &context, layout: layout)
+
+        let dotRadius = max(1.6, cs * 0.07)
+        for cell in dots {
+            let p = layout.center(of: cell)
+            context.fill(Path(ellipseIn: CGRect(x: p.x - dotRadius, y: p.y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)),
+                         with: .color(dotColor.opacity(0.6)))
+        }
+
+        for ghost in ghosts where board.grid[ghost.cell] == nil {
+            drawGhost(ghost.piece, at: layout.center(of: ghost.cell), cellSize: cs, in: &context)
+        }
+        for cell in board.grid.indices {
+            if let piece = board.grid[cell] { drawPiece(piece, at: layout.center(of: cell), cellSize: cs, in: &context) }
+        }
+
+        // Sources in check.
+        for source in board.sources.joined() where board.killzone[source] {
+            let p = layout.center(of: source), r = cs * 0.46
+            context.drawLayer { layer in
+                layer.addFilter(.shadow(color: .gridRed, radius: 4))
+                layer.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
+                             with: .color(.gridRed), lineWidth: max(2, cs * 0.09))
+            }
+        }
+
+        if let lastMove {
+            context.stroke(Path(layout.rect(lastMove).insetBy(dx: 2, dy: 2)), with: .color(.textPrimary.opacity(0.85)), lineWidth: 2)
+        }
+    }
+
+    private static func lightColor(_ owners: Owners) -> Color {
+        if owners.contains(.shared) || owners.isSuperset(of: [.of(0), .of(1)]) { return .gridGreen }
+        return owners.contains(.of(0)) ? .seat(0) : .seat(1)
+    }
+
+    /// Column letters along the top edge, row numbers down the left, as the move log names squares.
+    private func drawCoordinates(in context: inout GraphicsContext, layout: BoardLayout) {
+        let cs = layout.cellSize, inset = cs * 0.08
+        let font = Font.system(size: max(6, cs * 0.22), weight: .semibold, design: .monospaced)
+        for i in 0..<board.size {
+            let top = layout.rect(i), left = layout.rect(i * board.size)
+            context.draw(Text(board.coordinate(i).prefix(1)).font(font).foregroundStyle(Color.textSecondary.opacity(0.75)),
+                         at: CGPoint(x: top.maxX - inset, y: top.minY + inset), anchor: .topTrailing)
+            context.draw(Text("\(i + 1)").font(font).foregroundStyle(Color.textSecondary.opacity(0.75)),
+                         at: CGPoint(x: left.minX + inset, y: left.maxY - inset), anchor: .bottomLeading)
+        }
+    }
+
+    /// Each firing laser's four diagonals, up to the edge or the diffuser / laser that stops them.
+    private func drawBeams(in context: inout GraphicsContext, layout: BoardLayout) {
+        guard !board.activeLasers.isEmpty else { return }
+        let n = board.size, cs = layout.cellSize
+        var beams = Path()
+        for laser in board.activeLasers {
+            for (dr, dc) in Board.diagonals {
+                var r = laser / n, c = laser % n
+                beams.move(to: layout.center(of: laser))
+                while true {
+                    r += dr
+                    c += dc
+                    guard board.contains(r, c) else {
+                        let last = layout.center(row: r - dr, col: c - dc)
+                        beams.addLine(to: CGPoint(x: last.x + CGFloat(dc) * cs / 2, y: last.y + CGFloat(dr) * cs / 2))
+                        break
+                    }
+                    beams.addLine(to: layout.center(row: r, col: c))
+                    if let piece = board.grid[r * n + c], piece.kind == .lens || piece.kind == .laser { break }
+                }
+            }
+        }
+        context.drawLayer { layer in
+            layer.addFilter(.shadow(color: .gridRed, radius: 3))
+            layer.stroke(beams, with: .color(.gridRed.opacity(0.9)), style: StrokeStyle(lineWidth: max(1.5, cs * 0.06), lineCap: .round))
+        }
+    }
+
+    private func drawPiece(_ piece: Piece, at p: CGPoint, cellSize cs: CGFloat, in context: inout GraphicsContext) {
+        let s = cs * 0.32
+        if piece.kind == .source {
+            let color = Color.seat(piece.owner)
+            context.drawLayer { layer in
+                layer.addFilter(.shadow(color: color, radius: 5))
+                layer.fill(Path(ellipseIn: CGRect(x: p.x - s * 0.9, y: p.y - s * 0.9, width: s * 1.8, height: s * 1.8)), with: .color(color))
+            }
+            context.stroke(Path(ellipseIn: CGRect(x: p.x - s * 0.42, y: p.y - s * 0.42, width: s * 0.84, height: s * 0.84)),
+                           with: .color(.gridUIBackground.opacity(0.9)), lineWidth: 2)
+            return
+        }
+        if piece.kind == .chamber {
+            context.fill(Self.glyph(.chamber, nil, at: p, size: s), with: .color(.textPrimary.opacity(0.10)))
+        }
+        let ink: Color = piece.kind == .laser ? Self.laserInk : piece.kind == .lens ? Self.diffuserInk : .textPrimary
+        let width = piece.kind == .lens ? max(2, cs * 0.075) : max(1.6, cs * 0.055)
+        context.stroke(Self.glyph(piece.kind, piece.orientation, at: p, size: s), with: .color(ink),
+                       style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+    }
+
+    /// A removed piece: its outline dashed, crossed out.
+    private func drawGhost(_ piece: Piece, at p: CGPoint, cellSize cs: CGFloat, in context: inout GraphicsContext) {
+        let s = cs * 0.30
+        let outline = piece.kind == .source
+            ? Path(ellipseIn: CGRect(x: p.x - s, y: p.y - s, width: s * 2, height: s * 2))
+            : Self.glyph(piece.kind, piece.orientation, at: p, size: s)
+        context.stroke(outline, with: .color(Self.laserInk.opacity(0.5)), style: StrokeStyle(lineWidth: 1.6, dash: [3, 3]))
+        var cross = Path()
+        cross.move(to: CGPoint(x: p.x - s * 0.7, y: p.y - s * 0.7))
+        cross.addLine(to: CGPoint(x: p.x + s * 0.7, y: p.y + s * 0.7))
+        cross.move(to: CGPoint(x: p.x + s * 0.7, y: p.y - s * 0.7))
+        cross.addLine(to: CGPoint(x: p.x - s * 0.7, y: p.y + s * 0.7))
+        context.stroke(cross, with: .color(Self.laserInk.opacity(0.55)), lineWidth: 1.4)
+    }
+
+    /// The strokable outline of a piece, centered on `p` within ±`s`. The diffuser is the same
+    /// figure as `DiffuserShape` (two arms and the beam's tail), turned to face its outputs.
+    private static func glyph(_ kind: PieceKind, _ orientation: Orientation?, at p: CGPoint, size s: CGFloat) -> Path {
+        var path = Path()
+        switch kind {
+        case .mirror:
+            if orientation == .slash {
+                path.move(to: CGPoint(x: p.x + s, y: p.y - s))
+                path.addLine(to: CGPoint(x: p.x - s, y: p.y + s))
+            } else {
+                path.move(to: CGPoint(x: p.x - s, y: p.y - s))
+                path.addLine(to: CGPoint(x: p.x + s, y: p.y + s))
+            }
+        case .prism:
+            path.addLines([CGPoint(x: p.x, y: p.y - s), CGPoint(x: p.x + s, y: p.y + s), CGPoint(x: p.x - s, y: p.y + s)])
+            path.closeSubpath()
+        case .chamber, .source:
+            path.addRoundedRect(in: CGRect(x: p.x - s, y: p.y - s, width: s * 2, height: s * 2),
+                                cornerSize: CGSize(width: s * 0.28, height: s * 0.28))
+        case .laser:
+            path.addLines([CGPoint(x: p.x, y: p.y - s), CGPoint(x: p.x + s, y: p.y), CGPoint(x: p.x, y: p.y + s), CGPoint(x: p.x - s, y: p.y)])
+            path.closeSubpath()
+            let x = s * 0.45
+            path.move(to: CGPoint(x: p.x - x, y: p.y - x))
+            path.addLine(to: CGPoint(x: p.x + x, y: p.y + x))
+            path.move(to: CGPoint(x: p.x + x, y: p.y - x))
+            path.addLine(to: CGPoint(x: p.x - x, y: p.y + x))
+        case .lens:
+            // Drawn facing NE (arms up and right, tail from the SW), then turned clockwise.
+            path.move(to: CGPoint(x: 0, y: -s))
+            path.addLine(to: .zero)
+            path.addLine(to: CGPoint(x: s, y: 0))
+            path.move(to: CGPoint(x: -s, y: s))
+            path.addLine(to: .zero)
+            let quarterTurns: CGFloat = switch orientation {
+            case .se: 1
+            case .sw: 2
+            case .nw: 3
+            default: 0
+            }
+            path = path.applying(CGAffineTransform(rotationAngle: quarterTurns * .pi / 2)
+                .concatenating(CGAffineTransform(translationX: p.x, y: p.y)))
+        }
+        return path
+    }
+}
+
+extension BoardView where Header == EmptyView {
+    init(game: PhotonGame, bottomOverlap: CGFloat = 0) {
+        self.init(game: game, bottomOverlap: bottomOverlap) { EmptyView() }
+    }
+}
+
 #Preview {
-    BoardView()
+    BoardView(game: PhotonGame())
 }

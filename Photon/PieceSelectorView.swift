@@ -10,7 +10,7 @@ import SwiftUI
 let num_pieces = 9
 
 struct PieceSelectorView: View {
-    @State private var selectedPiece = 0
+    @Binding var selectedPiece: Int
     
     var body: some View {
         VStack(spacing: 8) {
@@ -62,6 +62,7 @@ struct PieceSelectorView: View {
                             }
                             .padding(16)
                             .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                             
                             
                         case 2:
@@ -73,6 +74,7 @@ struct PieceSelectorView: View {
                             }
                             .padding(16)
                             .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                             
                         case 3:
                             Button(action: {
@@ -83,6 +85,7 @@ struct PieceSelectorView: View {
                             }
                             .padding(16)
                             .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                             
                         case 4:
                             Button(action: {
@@ -93,6 +96,7 @@ struct PieceSelectorView: View {
                             }
                             .padding(16)
                             .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                             
                         case 5:
                             
@@ -104,6 +108,7 @@ struct PieceSelectorView: View {
                             }
                             .padding(16)
                             .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                             
                         default:
                             Text("Placeholder")
@@ -125,6 +130,7 @@ struct PieceSelectorView: View {
                                 }
                                 .padding(16)
                                 .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                                 
                             case 7:
                                 
@@ -138,6 +144,7 @@ struct PieceSelectorView: View {
                                 }
                                 .padding(16)
                                 .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                                 
                             case 8:
                                 
@@ -150,6 +157,7 @@ struct PieceSelectorView: View {
                                 }
                                 .padding(16)
                                 .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                                 
                             case 9:
                                 
@@ -162,6 +170,7 @@ struct PieceSelectorView: View {
                                 }
                                 .padding(16)
                                 .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
                                 
                                 
                             default:
@@ -188,5 +197,5 @@ struct PieceSelectorView: View {
 }
 
 #Preview {
-    PieceSelectorView()
+    PieceSelectorView(selectedPiece: .constant(0))
 }

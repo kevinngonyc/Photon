@@ -32,4 +32,13 @@ extension Color {
     static let textPrimary = Color(hex: 0xEDEFF3)
     static let textSecondary = Color(hex: 0x8B93A3)
     static let textMuted = Color(hex: 0x565D6B)
+
+    /// A player's color: Photon (0) is cyan, Amber (1) orange, shared sources green.
+    static func seat(_ owner: Int) -> Color {
+        switch owner {
+        case 0: .gridCyanBlue
+        case 1: .gridOrange
+        default: .gridGreen
+        }
+    }
 }
