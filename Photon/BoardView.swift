@@ -8,8 +8,26 @@
 import SwiftUI
 import UIKit
 
-struct BoardView<Header: View>: View {
-    var game: PhotonGame
+/// What a `BoardView` shows, and where its taps go: the game, or the tutorial.
+protocol BoardModel: AnyObject {
+    var board: Board { get }
+    /// The seat whose action the board is waiting for; playable squares are dotted in its color.
+    var activeSeat: Player { get }
+    var playableCells: Set<Int> { get }
+    /// What the last move removed, drawn as ghosts.
+    var ghosts: [Removal] { get }
+    var lastMove: Int? { get }
+    /// Squares ringed to point the player at them.
+    var ringedCells: Set<Int> { get }
+    func tap(_ cell: Int)
+}
+
+extension BoardModel {
+    var ringedCells: Set<Int> { [] }
+}
+
+struct BoardView<Model: BoardModel, Header: View>: View {
+    var model: Model
     /// How far views below overlap the bottom of the board area; the board stays clear of it.
     var bottomOverlap: CGFloat = 0
     /// Room kept just above the board for `header`; the two are centered together.
@@ -25,9 +43,9 @@ struct BoardView<Header: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let layout = BoardLayout(containerSize: geometry.size, bottomOverlap: bottomOverlap, topInset: headerHeight,
-                                     cells: game.board.size, scale: scale, offset: offset)
+                                     cells: model.board.size, scale: scale, offset: offset)
             ZStack (alignment: .bottomTrailing) {
-                ZoomedBoard(scene: BoardScene(game: game), layout: layout)
+                ZoomedBoard(scene: BoardScene(model: model), layout: layout)
                     .frame(width: geometry.size.width, height: geometry.size.height)
 
                 // Handles pinch-to-zoom (anchored to pinch point),
@@ -40,7 +58,7 @@ struct BoardView<Header: View>: View {
                     minScale: minScale,
                     maxScale: maxScale,
                     onTap: { point in
-                        if let cell = layout.cell(at: point) { game.tap(cell) }
+                        if let cell = layout.cell(at: point) { model.tap(cell) }
                     }
                 )
                 if scale != 1.0 {
@@ -302,6 +320,13 @@ private struct BoardLayout {
 
     func center(of cell: Int) -> CGPoint { center(row: cell / cells, col: cell % cells) }
 
+    /// Applies the zoom to a canvas, so it can be drawn on in unzoomed coordinates.
+    func zoom(_ context: inout GraphicsContext) {
+        context.translateBy(x: center.x + offset.width, y: center.y + offset.height)
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: -center.x, y: -center.y)
+    }
+
     /// The square under a point in the (zoomed) view.
     func cell(at point: CGPoint) -> Int? {
         let x = (point.x - center.x - offset.width) / scale + center.x
@@ -332,10 +357,20 @@ private struct ZoomedBoard: View, Animatable {
         Canvas { [scene, layout] context, _ in
             scene.draw(in: &context, layout: layout)
         }
+        .overlay {
+            // Only the rings redraw every frame, to pulse.
+            if !scene.rings.isEmpty {
+                TimelineView(.animation) { timeline in
+                    Canvas { [scene, layout] context, _ in
+                        scene.drawRings(in: &context, layout: layout, at: timeline.date)
+                    }
+                }
+            }
+        }
     }
 }
 
-/// Everything the board draws, read from the game in `body` so SwiftUI tracks it.
+/// Everything the board draws, read from the model in `body` so SwiftUI tracks it.
 private struct BoardScene {
     let board: Board
     let moat: [Bool]
@@ -343,23 +378,23 @@ private struct BoardScene {
     let dotColor: Color
     let ghosts: [Removal]
     let lastMove: Int?
+    let rings: Set<Int>
 
-    init(game: PhotonGame) {
-        board = game.board
-        moat = game.board.moat()
-        dots = game.isLocalTurn ? game.legalCells : []
-        dotColor = .seat(game.activeSeat)
-        ghosts = game.ghosts
-        lastMove = game.lastMove
+    init(model: some BoardModel) {
+        board = model.board
+        moat = model.board.moat()
+        dots = model.playableCells
+        dotColor = .seat(model.activeSeat)
+        ghosts = model.ghosts
+        lastMove = model.lastMove
+        rings = model.ringedCells
     }
 
     private static let laserInk = Color(hex: 0xFF6B8A)
     private static let diffuserInk = Color(hex: 0x7DD3FC)
 
     func draw(in context: inout GraphicsContext, layout: BoardLayout) {
-        context.translateBy(x: layout.center.x + layout.offset.width, y: layout.center.y + layout.offset.height)
-        context.scaleBy(x: layout.scale, y: layout.scale)
-        context.translateBy(x: -layout.center.x, y: -layout.center.y)
+        layout.zoom(&context)
 
         let n = board.size, cs = layout.cellSize
         for cell in 0..<n * n {
@@ -402,6 +437,24 @@ private struct BoardScene {
 
         if let lastMove {
             context.stroke(Path(layout.rect(lastMove).insetBy(dx: 2, dy: 2)), with: .color(.textPrimary.opacity(0.85)), lineWidth: 2)
+        }
+    }
+
+    /// A glowing ring on each ringed square, with a ripple spreading out from it.
+    func drawRings(in context: inout GraphicsContext, layout: BoardLayout, at date: Date) {
+        layout.zoom(&context)
+        let cs = layout.cellSize, period = 1.4
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+        for cell in rings {
+            let rect = layout.rect(cell), corner = cs * 0.18
+            context.drawLayer { layer in
+                layer.addFilter(.shadow(color: .textPrimary, radius: 4))
+                layer.stroke(Path(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), cornerRadius: corner),
+                             with: .color(.textPrimary), lineWidth: max(2, cs * 0.06))
+            }
+            let spread = cs * 0.45 * phase
+            context.stroke(Path(roundedRect: rect.insetBy(dx: -spread, dy: -spread), cornerRadius: corner + spread),
+                           with: .color(.textPrimary.opacity(0.75 * (1 - phase))), lineWidth: max(1.5, cs * 0.045))
         }
     }
 
@@ -535,11 +588,11 @@ private struct BoardScene {
 }
 
 extension BoardView where Header == EmptyView {
-    init(game: PhotonGame, bottomOverlap: CGFloat = 0) {
-        self.init(game: game, bottomOverlap: bottomOverlap) { EmptyView() }
+    init(model: Model, bottomOverlap: CGFloat = 0) {
+        self.init(model: model, bottomOverlap: bottomOverlap) { EmptyView() }
     }
 }
 
 #Preview {
-    BoardView(game: PhotonGame())
+    BoardView(model: PhotonGame())
 }

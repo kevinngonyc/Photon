@@ -9,6 +9,8 @@ import SwiftUI
 
 struct GameHUDView: View {
     @Bindable var game: PhotonGame
+    /// Opens the tutorial, which ContentView presents over everything.
+    var openTutorial: () -> Void
 
     @State private var showsGuide = false
     @State private var flashing = false
@@ -139,7 +141,8 @@ struct GameHUDView: View {
                 Toggle("Check", systemImage: "exclamationmark.shield", isOn: $game.checkMode)
                     .disabled(rulesLocked)
             }
-            Button("Moves & Rules", systemImage: "list.bullet.rectangle") { showsGuide = true }
+            Button("Moves & Legend", systemImage: "list.bullet.rectangle") { showsGuide = true }
+            Button("Tutorial", systemImage: "graduationcap") { openTutorial() }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.body.weight(.semibold))
@@ -151,7 +154,7 @@ struct GameHUDView: View {
     }
 }
 
-/// The move log, the legend and the rules.
+/// The move log and the legend. The rules are taught by the tutorial.
 struct GameGuideView: View {
     var game: PhotonGame
 
@@ -174,11 +177,6 @@ struct GameGuideView: View {
                     legendRow(.gridGreen, "Shared light — either may place")
                     legendRow(.gridRed, "Laser beam / kill zone")
                     legendRow(Color(hex: 0xFF6B8A), "Removed last turn (ghost)", dashed: true)
-                }
-                Section("How to Play") {
-                    Text(Self.rules)
-                        .font(.footnote)
-                        .foregroundStyle(Color.textSecondary)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -210,17 +208,9 @@ struct GameGuideView: View {
                 .foregroundStyle(Color.textPrimary)
         }
     }
-
-    private static let rules = """
-        Tap a dot-marked square to place the selected piece: a square is legal only if your light enters it across an empty gap. \
-        A piece lives while light runs into one of its faces — cut the feed behind an enemy piece to kill it. \
-        Light three faces of a chamber with your light to make it your source. \
-        A diffuser drops only where your light crosses a laser diagonal (NE/SW on ╱ beams, NW/SE on ╲) and stops that beam. \
-        Anything but a laser or diffuser caught between two laser beams is destroyed. With Check on, a source gets one turn to break the cavity first.
-        """
 }
 
 #Preview {
-    GameHUDView(game: PhotonGame())
+    GameHUDView(game: PhotonGame(), openTutorial: {})
         .background(Color.gridUIBackground)
 }

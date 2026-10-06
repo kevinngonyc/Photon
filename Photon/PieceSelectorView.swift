@@ -11,11 +11,26 @@ let num_pieces = 9
 
 struct PieceSelectorView: View {
     @Binding var selectedPiece: Int
-    
+    /// A button to point the player at (the tutorial's), until they pick it.
+    var pointedPiece: Int? = nil
+    /// While a source is being placed, that's the only piece there is: the label says so and
+    /// the piece buttons are off.
+    var placesSource = false
+
+    private func isSelected(_ index: Int) -> Bool {
+        !placesSource && selectedPiece == index
+    }
+
+    private func isPointed(_ index: Int) -> Bool {
+        pointedPiece == index && !isSelected(index)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             Group {
-                switch selectedPiece {
+                switch placesSource ? -1 : selectedPiece {
+                case -1:
+                    Text("Source")
                 case 1:
                     Text("Mirror")
                 case 2:
@@ -61,8 +76,9 @@ struct PieceSelectorView: View {
                                     .font(.title)
                             }
                             .padding(16)
-                            .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                            .beacon(isPointed(index))
                             
                             
                         case 2:
@@ -73,8 +89,9 @@ struct PieceSelectorView: View {
                                         .font(.title)
                             }
                             .padding(16)
-                            .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                            .beacon(isPointed(index))
                             
                         case 3:
                             Button(action: {
@@ -84,8 +101,9 @@ struct PieceSelectorView: View {
                                         .font(.title)
                             }
                             .padding(16)
-                            .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                            .beacon(isPointed(index))
                             
                         case 4:
                             Button(action: {
@@ -95,8 +113,9 @@ struct PieceSelectorView: View {
                                         .font(.title)
                             }
                             .padding(16)
-                            .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                            .beacon(isPointed(index))
                             
                         case 5:
                             
@@ -107,8 +126,9 @@ struct PieceSelectorView: View {
                                         .font(.title)
                             }
                             .padding(16)
-                            .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                            .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                            .beacon(isPointed(index))
                             
                         default:
                             Text("Placeholder")
@@ -129,8 +149,9 @@ struct PieceSelectorView: View {
                                             .frame(width: 24, height: 24)
                                 }
                                 .padding(16)
-                                .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                                .beacon(isPointed(index))
                                 
                             case 7:
                                 
@@ -143,8 +164,9 @@ struct PieceSelectorView: View {
                                     
                                 }
                                 .padding(16)
-                                .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                                .beacon(isPointed(index))
                                 
                             case 8:
                                 
@@ -156,8 +178,9 @@ struct PieceSelectorView: View {
                                             .rotationEffect(.degrees(90))
                                 }
                                 .padding(16)
-                                .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                                .beacon(isPointed(index))
                                 
                             case 9:
                                 
@@ -169,8 +192,9 @@ struct PieceSelectorView: View {
                                             .rotationEffect(.degrees(270))
                                 }
                                 .padding(16)
-                                .glassEffect(selectedPiece == index ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
+                                .glassEffect(isSelected(index) ? .regular.tint(.gridUIHighlight) : .identity, in: RoundedRectangle(cornerRadius: 16.0))
                                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: [])
+                                .beacon(isPointed(index))
                                 
                                 
                             default:
@@ -180,6 +204,7 @@ struct PieceSelectorView: View {
                             
                     }
             }
+            .disabled(placesSource)
             .padding(.top, 8)
             .padding(.bottom, 32)
             .frame(maxWidth: .infinity) // Expands layout to fill screen
@@ -196,6 +221,22 @@ struct PieceSelectorView: View {
     }
 }
 
+private extension View {
+    /// A pulsing outline around a piece button.
+    func beacon(_ isOn: Bool) -> some View {
+        overlay {
+            if isOn {
+                RoundedRectangle(cornerRadius: 16.0)
+                    .strokeBorder(Color.gridCyanBlue, lineWidth: 2)
+                    .phaseAnimator([false, true]) { outline, lit in
+                        outline.opacity(lit ? 1 : 0.2)
+                    } animation: { _ in .easeInOut(duration: 0.7) }
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
 #Preview {
-    PieceSelectorView(selectedPiece: .constant(0))
+    PieceSelectorView(selectedPiece: .constant(0), pointedPiece: 3)
 }

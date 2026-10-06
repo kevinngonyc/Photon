@@ -17,7 +17,7 @@ private nonisolated struct BotReply: Sendable {
 }
 
 @Observable
-final class PhotonGame {
+final class PhotonGame: BoardModel {
     enum Mode: String, CaseIterable, Identifiable {
         case bot, twoPlayer
         /// Against another device over Game Center; see `OnlineMatch`.
@@ -157,10 +157,16 @@ final class PhotonGame {
         resetBoard()
     }
 
+    /// An empty board under the rules the app plays by (the tutorial's too).
+    static func emptyBoard(size: Int, checkMode: Bool) -> Board {
+        var board = Board(size: size, fedSurvival: true, lensPrivate: true, lifeOwnerRequired: false, checkMode: checkMode)
+        board.resolve()
+        return board
+    }
+
     private func resetBoard() {
         botTask?.cancel()
-        board = Board(size: boardSize, fedSurvival: true, lensPrivate: true, lifeOwnerRequired: false, checkMode: checkMode)
-        board.resolve()
+        board = Self.emptyBoard(size: boardSize, checkMode: checkMode)
         phase = .setup
         turn = 0
         outcome = nil
@@ -224,16 +230,18 @@ final class PhotonGame {
         case .setup:
             return Set(board.setupCells())
         case .play:
-            if let item = selectedItem, item.kind == .lens { return diffuserTargets(item.orientation) }
+            if let item = selectedItem, item.kind == .lens { return Self.diffuserTargets(on: board, for: turn, item.orientation) }
             return Set(board.reach(turn))
         }
     }
 
+    var playableCells: Set<Int> { isLocalTurn ? legalCells : [] }
+
     /// A diffuser drops only where the player's light crosses a laser diagonal it matches:
     /// NE/SW on ╱ beams, NW/SE on ╲ beams. Cavity squares are allowed.
-    private func diffuserTargets(_ orientation: Orientation?) -> Set<Int> {
+    static func diffuserTargets(on board: Board, for player: Player, _ orientation: Orientation?) -> Set<Int> {
         let axis: LaserAxes = orientation == .ne || orientation == .sw ? .slash : .backslash
-        return Set(board.reach(turn, includeKillzone: true).filter { board.laserAxis[$0].contains(axis) })
+        return Set(board.reach(player, includeKillzone: true).filter { board.laserAxis[$0].contains(axis) })
     }
 
     var status: (text: String, seat: Player) {
@@ -597,7 +605,7 @@ final class PhotonGame {
     private func isLegal(_ move: Move, by mover: Player) -> Bool {
         guard phase == .play, outcome == nil, mover == turn, PieceKind.placeable.contains(move.kind),
               PhotonBot.orientations(for: move.kind).contains(move.orientation) else { return false }
-        let targets = move.kind == .lens ? diffuserTargets(move.orientation) : Set(board.reach(mover))
+        let targets = move.kind == .lens ? Self.diffuserTargets(on: board, for: mover, move.orientation) : Set(board.reach(mover))
         return targets.contains(move.cell)
     }
 
