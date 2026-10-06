@@ -119,6 +119,13 @@ struct GameHUDView: View {
                     }
                     .pickerStyle(.menu)
                 }
+                // Also the side taken in online games this player hosts.
+                Picker("Your Color", systemImage: "paintpalette", selection: $game.colorChoice) {
+                    Text("Cyan (first)").tag(PhotonGame.ColorChoice.cyan)
+                    Text("Amber (second)").tag(PhotonGame.ColorChoice.amber)
+                    Text("Random").tag(PhotonGame.ColorChoice.random)
+                }
+                .pickerStyle(.menu)
                 Picker("Board", systemImage: "square.grid.3x3", selection: $game.boardSize) {
                     ForEach(GameRules.boardSizes, id: \.self) { Text("\($0)×\($0)").tag($0) }
                 }

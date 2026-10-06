@@ -154,13 +154,17 @@ nonisolated enum PhotonBot {
     }
 
     /// Where the bot puts a source during setup: the free square closest (Manhattan) to the
-    /// point reflection of the human's matching source.
-    static func setupSource(on board: Board) -> Int? {
+    /// point reflection of the human's matching source. Playing first (as seat 0), with nothing
+    /// to reflect yet, it picks a random free square.
+    static func setupSource(on board: Board, player: Player = 1) -> Int? {
         var candidates = board.setupCells()
         if candidates.isEmpty { candidates = board.grid.indices.filter { board.grid[$0] == nil } }
-        guard let firstHuman = board.sources[0].first else { return candidates.first }
-        let index = board.sources[1].count
-        let from = index < board.sources[0].count ? board.sources[0][index] : firstHuman
+        let human = board.sources[1 - player]
+        guard let firstHuman = human.first else {
+            return player == 0 ? candidates.randomElement() : candidates.first
+        }
+        let index = board.sources[player].count
+        let from = index < human.count ? human[index] : firstHuman
         let n = board.size
         let targetRow = n - 1 - from / n, targetCol = n - 1 - from % n
         func distance(_ cell: Int) -> Int { abs(cell / n - targetRow) + abs(cell % n - targetCol) }

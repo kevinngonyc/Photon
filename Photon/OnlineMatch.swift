@@ -32,12 +32,23 @@ nonisolated enum GameAction: Codable, Sendable, Hashable {
 
 /// What a match stores on Game Center.
 nonisolated struct MatchData: Codable, Sendable, Equatable {
-    /// Who took the match's first turn and so plays seat 0 (blue). Game Center doesn't keep
-    /// participants in turn order (a rematch can list them either way), so the seats are
-    /// stored rather than read off the participant list.
-    var firstPlayerID: String
+    /// Who started the match, and the seat they chose; the other player takes the other seat.
+    /// Game Center doesn't keep participants in turn order (a rematch can list them either
+    /// way), so the seats are stored rather than read off the participant list.
+    var hostID: String
+    /// Missing in matches from before colors could be chosen, where the host was always seat 0.
+    var hostSeat: Player?
     var rules: GameRules
     var actions: [GameAction]
+
+    private enum CodingKeys: String, CodingKey {
+        case hostID = "firstPlayerID", hostSeat, rules, actions
+    }
+
+    func seat(of playerID: String) -> Player {
+        let seat = hostSeat ?? 0
+        return playerID == hostID ? seat : 1 - seat
+    }
 
     func encoded() throws -> Data {
         try (JSONEncoder().encode(self) as NSData).compressed(using: .zlib) as Data
@@ -54,7 +65,7 @@ final class OnlineMatch: NSObject {
     private(set) var isAuthenticated = false
     /// Whether a match is on the board.
     private(set) var isActive = false
-    /// 0 if this player took the match's first turn (blue, moves first), otherwise 1.
+    /// 0 if this player is cyan (moves first), otherwise 1.
     private(set) var localSeat: Player = 0
     /// Nil until someone takes the other seat.
     private(set) var opponentName: String?
@@ -71,9 +82,13 @@ final class OnlineMatch: NSObject {
     /// Called whenever the match on the board is opened or changes. The data is nil for a
     /// match nobody has moved in yet.
     @ObservationIgnored var onLoad: ((_ data: MatchData?, _ isNewMatch: Bool) -> Void)?
+    /// Asked when this player starts a match: the rules to play by and the seat they take.
+    @ObservationIgnored var onStart: (() -> (rules: GameRules, seat: Player))?
 
     @ObservationIgnored private var match: GKTurnBasedMatch?
-    @ObservationIgnored private var firstPlayerID: String?
+    /// Who started the match on the board, and their seat.
+    @ObservationIgnored private var host: (id: String, seat: Player)?
+    @ObservationIgnored private var startingMatchID: String?
     @ObservationIgnored private var matchmaker: UIViewController?
     @ObservationIgnored private var signInController: UIViewController?
     @ObservationIgnored private var didStartAuthentication = false
@@ -98,7 +113,7 @@ final class OnlineMatch: NSObject {
         let local = GKLocalPlayer.local
         isAuthenticated = local.isAuthenticated
         // Keep the sign-in screen for when the player asks to play online; popping it up at
-        // launch would get in the way of a game against Amber.
+        // launch would get in the way of a game against the bot.
         signInController = viewController
         if local.isAuthenticated {
             signInController = nil
@@ -137,6 +152,9 @@ final class OnlineMatch: NSObject {
         request.maxPlayers = 2
         request.recipients = recipients
         request.inviteMessage = "Let’s play Photon!"
+        // Color stays out of the request (no player group or attributes), so it never narrows
+        // who automatch pairs this player with: whoever starts a match picks their color, and
+        // whoever joins takes the side that's left.
         let controller = GKTurnBasedMatchmakerViewController(matchRequest: request)
         controller.turnBasedMatchmakerDelegate = self
         controller.showExistingMatches = true
@@ -153,7 +171,7 @@ final class OnlineMatch: NSObject {
     /// the games list.
     func close() {
         match = nil
-        firstPlayerID = nil
+        host = nil
         isActive = false
         isMyTurn = false
         isOver = false
@@ -179,19 +197,30 @@ final class OnlineMatch: NSObject {
             return
         }
         let isNew = match.matchID != self.match?.matchID
-        let data = raw.flatMap { $0.isEmpty ? nil : MatchData.decode($0) }
+        var data = raw.flatMap { $0.isEmpty ? nil : MatchData.decode($0) }
         if let raw, !raw.isEmpty, data == nil {
             alert = "This game was saved by a newer version of Photon."
             return
+        }
+        var isLocalTurn = match.status == .open && match.currentParticipant?.player?.gamePlayerID == localID
+        // Whoever moves while the match is still empty is starting it. Anyone joining, by invite
+        // or automatch, only gets the match after that, with the seats already set.
+        if data == nil && isLocalTurn, let onStart {
+            // Another load of this match is already starting it, and will show it.
+            guard startingMatchID != match.matchID else { return }
+            startingMatchID = match.matchID
+            defer { startingMatchID = nil }
+            guard let started = await start(match, onStart()) else { return }
+            data = started
+            isLocalTurn = started.hostSeat == 0
         }
         if isNew { requestNotifications() }
         self.match = match
         isActive = true
         isOver = match.status == .ended
-        isMyTurn = match.status == .open && match.currentParticipant?.player?.gamePlayerID == localID
-        // Whoever moves while the match is still empty is starting it, and so takes seat 0.
-        firstPlayerID = data?.firstPlayerID ?? (isMyTurn ? localID : nil)
-        localSeat = firstPlayerID == localID ? 0 : 1
+        isMyTurn = isLocalTurn
+        host = data.map { ($0.hostID, $0.hostSeat ?? 0) } ?? (isMyTurn ? (localID, 0) : nil)
+        localSeat = data?.seat(of: localID) ?? (isMyTurn ? 0 : 1)
         let opponent = opponent(in: match)
         opponentName = opponent?.player?.displayName
         forfeitedSeat = nil
@@ -204,6 +233,27 @@ final class OnlineMatch: NSObject {
         if forfeitedSeat == 1 - localSeat && isMyTurn,
            await endMatch(match, data: raw ?? Data(), winner: localSeat, message: nil) {
             await load(match)
+        }
+    }
+
+    /// Settles the seats of a match this player is starting, so a random pick isn't drawn
+    /// again the next time it loads. As cyan, they keep the turn to place the first source;
+    /// as amber, it passes straight to the opponent (or to whoever automatch finds).
+    private func start(_ match: GKTurnBasedMatch, _ setup: (rules: GameRules, seat: Player)) async -> MatchData? {
+        let data = MatchData(hostID: localID, hostSeat: setup.seat, rules: setup.rules, actions: [])
+        do {
+            let encoded = try data.encoded()
+            if setup.seat == 0 {
+                try await match.saveCurrentTurn(withMatch: encoded)
+            } else {
+                match.message = "\(GKLocalPlayer.local.displayName) is playing amber. You’re cyan — place the first source."
+                let others = match.participants.filter { $0.player?.gamePlayerID != localID }
+                try await match.endTurn(withNextParticipants: others, turnTimeout: GKTurnTimeoutDefault, match: encoded)
+            }
+            return data
+        } catch {
+            alert = "Couldn’t start the game: \(error.localizedDescription)"
+            return nil
         }
     }
 
@@ -224,10 +274,10 @@ final class OnlineMatch: NSObject {
     /// Stores the game on Game Center and passes the turn, or ends the match if there is a
     /// winner. `message` is what the opponent sees in the turn notification.
     func submit(rules: GameRules, actions: [GameAction], message: String, winner: Player?) {
-        guard let match, isMyTurn, !isOver, !isSending, let firstPlayerID else { return }
+        guard let match, isMyTurn, !isOver, !isSending, let host else { return }
         let data: Data
         do {
-            data = try MatchData(firstPlayerID: firstPlayerID, rules: rules, actions: actions).encoded()
+            data = try MatchData(hostID: host.id, hostSeat: host.seat, rules: rules, actions: actions).encoded()
         } catch {
             alert = "Couldn’t save your move: \(error.localizedDescription)"
             return
@@ -298,7 +348,8 @@ final class OnlineMatch: NSObject {
         }
     }
 
-    /// Starts a new match against the same opponent, with this player moving first.
+    /// Starts a new match against the same opponent, with this player starting it (and so
+    /// picking their color).
     func rematch() {
         guard let match, isOver else { return }
         Task {

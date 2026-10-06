@@ -30,6 +30,22 @@ final class PhotonGame {
         case setup, play
     }
 
+    /// Which side the player takes. Cyan places and moves first.
+    enum ColorChoice: String, CaseIterable, Identifiable {
+        case cyan, amber, random
+
+        var id: Self { self }
+
+        /// The seat this choice gives, drawn afresh each time for random.
+        func pickSeat() -> Player {
+            switch self {
+            case .cyan: 0
+            case .amber: 1
+            case .random: Bool.random() ? 0 : 1
+            }
+        }
+    }
+
     struct PaletteItem {
         let kind: PieceKind
         let orientation: Orientation?
@@ -71,6 +87,12 @@ final class PhotonGame {
         didSet { if checkMode != oldValue && !isSyncing { newGame() } }
     }
     var difficulty: Difficulty = .balanced
+    /// The side the player takes against the bot, and in online games they host (including
+    /// rematches). Joining someone else's game, they get whichever side is left. A random
+    /// pick is drawn again for each new game.
+    var colorChoice: ColorChoice = .cyan {
+        didSet { if colorChoice != oldValue && mode == .bot { newGame() } }
+    }
 
     var rules: GameRules {
         GameRules(boardSize: boardSize, sourcesPerPlayer: sourcesPerPlayer, checkMode: checkMode)
@@ -86,6 +108,8 @@ final class PhotonGame {
     private(set) var board = Board()
     private(set) var phase = Phase.setup
     private(set) var turn: Player = 0
+    /// The human's seat against the bot, fixed when the game starts.
+    private(set) var humanSeat: Player = 0
     /// Set once the game is over.
     private(set) var outcome: GameOutcome?
     private(set) var isThinking = false
@@ -120,6 +144,7 @@ final class PhotonGame {
     init() {
         resetBoard()
         online.onLoad = { [weak self] data, isNewMatch in self?.matchLoaded(data, isNewMatch: isNewMatch) }
+        online.onStart = { [unowned self] in (rules, colorChoice.pickSeat()) }
     }
 
     /// Starts over with the current settings. Online, a game's rules are fixed when it starts,
@@ -146,7 +171,10 @@ final class PhotonGame {
         actions = []
         history = []
         cursor = -1
-        message = setupPrompt(0)
+        humanSeat = colorChoice.pickSeat()
+        // Playing first, the bot's opening source is part of the starting position.
+        if mode == .bot { placeBotSources() }
+        message = setupPrompt(setupSeat ?? 0)
         pushState()
     }
 
@@ -161,6 +189,9 @@ final class PhotonGame {
         return placed0 <= placed1 ? 0 : 1
     }
 
+    /// The bot's seat, when playing against it.
+    var botSeat: Player { 1 - humanSeat }
+
     /// The seat whose action the board is waiting for.
     var activeSeat: Player { phase == .setup ? setupSeat ?? 0 : turn }
 
@@ -168,14 +199,20 @@ final class PhotonGame {
     var isLocalTurn: Bool {
         guard outcome == nil, !isThinking else { return false }
         switch mode {
-        case .bot: return activeSeat == 0
+        case .bot: return activeSeat == humanSeat
         case .twoPlayer: return true
         case .online: return online.isMyTurn && !online.isOver && !isReviewing && activeSeat == online.localSeat
         }
     }
 
     /// The seat of the person holding the device (the first, with two players).
-    var viewerSeat: Player { mode == .online ? online.localSeat : 0 }
+    var viewerSeat: Player {
+        switch mode {
+        case .bot: humanSeat
+        case .twoPlayer: 0
+        case .online: online.localSeat
+        }
+    }
 
     /// Online, undo and redo only step back through the game to look at it: nothing is sent,
     /// and play resumes from the latest position.
@@ -222,7 +259,7 @@ final class PhotonGame {
             }
             return (text, seat)
         case .play:
-            if isThinking { return ("Amber is thinking…", turn) }
+            if isThinking { return ("\(name(turn)) is thinking…", turn) }
             return (mode == .online && isYou(turn) ? "Your move" : "\(name(turn)) to move", turn)
         }
     }
@@ -242,7 +279,7 @@ final class PhotonGame {
     /// Whether `player` is the person holding the device (never, with two players).
     private func isYou(_ player: Player) -> Bool {
         switch mode {
-        case .bot: player == 0
+        case .bot: player == humanSeat
         case .twoPlayer: false
         case .online: player == online.localSeat
         }
@@ -250,7 +287,7 @@ final class PhotonGame {
 
     func name(_ player: Player) -> String {
         switch mode {
-        case .bot: player == 0 ? "You" : "Amber"
+        case .bot: isYou(player) ? "You" : Self.botName(player)
         case .twoPlayer: "Player \(player + 1)"
         case .online: isYou(player) ? "You" : opponentName
         }
@@ -258,13 +295,16 @@ final class PhotonGame {
 
     func label(_ player: Player) -> String {
         switch mode {
-        case .bot: player == 0 ? "you" : "amber"
+        case .bot: isYou(player) ? "you" : Self.botName(player).lowercased()
         case .twoPlayer: "P\(player + 1)"
         case .online: isYou(player) ? "you" : "opp"
         }
     }
 
     private var opponentName: String { online.opponentName ?? "Opponent" }
+
+    /// The bot goes by its side's color: Cyan or Amber.
+    private static func botName(_ seat: Player) -> String { seat == 0 ? "Cyan" : "Amber" }
 
     private func resultText(_ outcome: GameOutcome) -> String {
         let winner = outcome.winner, loser = 1 - winner
@@ -316,9 +356,7 @@ final class PhotonGame {
 
     private func placeSetupSource(at cell: Int, seat: Player) {
         addSource(at: cell, seat: seat)
-        if mode == .bot && setupSeat == 1, let reply = PhotonBot.setupSource(on: board) {
-            addSource(at: reply, seat: 1)
-        }
+        if mode == .bot { placeBotSources() }
         if let next = setupSeat {
             message = setupPrompt(next)
         } else {
@@ -327,6 +365,14 @@ final class PhotonGame {
             message = "Sources set. \(name(0)) to move."
         }
         pushState()
+        if phase == .play && mode == .bot && turn == botSeat { startBotTurn() }
+    }
+
+    /// The bot's setup sources, for as long as setup is waiting on it.
+    private func placeBotSources() {
+        while setupSeat == botSeat, let reply = PhotonBot.setupSource(on: board, player: botSeat) {
+            addSource(at: reply, seat: botSeat)
+        }
     }
 
     private func addSource(at cell: Int, seat: Player) {
@@ -344,32 +390,32 @@ final class PhotonGame {
         turn = 1 - mover
         outcome = PhotonBot.outcome(after: mover, on: board)
         pushState()
-        if outcome == nil && mode == .bot && turn == 1 { startBotTurn() }
+        if outcome == nil && mode == .bot && turn == botSeat { startBotTurn() }
     }
 
-    /// Amber's reply, worked out (and played out) off the main actor.
+    /// The bot's reply, worked out (and played out) off the main actor.
     private func startBotTurn() {
         isThinking = true
-        let board = board, difficulty = difficulty
+        let board = board, difficulty = difficulty, bot = botSeat
         botTask = Task {
             try? await Task.sleep(for: .milliseconds(260))
             guard !Task.isCancelled else { return }
             let reply = await Task.detached(priority: .userInitiated) { () -> BotReply? in
-                guard let move = PhotonBot.botMove(board, player: 1, difficulty: difficulty) else { return nil }
+                guard let move = PhotonBot.botMove(board, player: bot, difficulty: difficulty) else { return nil }
                 var after = board
-                let result = after.apply(move, by: 1)
-                return BotReply(move: move, board: after, result: result, outcome: PhotonBot.outcome(after: 1, on: after))
+                let result = after.apply(move, by: bot)
+                return BotReply(move: move, board: after, result: result, outcome: PhotonBot.outcome(after: bot, on: after))
             }.value
             guard !Task.isCancelled else { return }
             isThinking = false
             guard let reply else {
-                outcome = .opponentCannotPlace(winner: 0)
+                outcome = .opponentCannotPlace(winner: 1 - bot)
                 history[cursor].outcome = outcome
                 return
             }
             self.board = reply.board
-            record(reply.move, by: 1, removed: reply.result.removed)
-            turn = 0
+            record(reply.move, by: bot, removed: reply.result.removed)
+            turn = 1 - bot
             outcome = reply.outcome
             pushState()
         }
@@ -437,10 +483,10 @@ final class PhotonGame {
         message = "Redo."
     }
 
-    /// Against the bot, history steps over positions where Amber is to move: nothing would
-    /// trigger her reply from there, so they'd be dead ends.
+    /// Against the bot, history steps over positions where the bot is to move: nothing would
+    /// trigger its reply from there, so they'd be dead ends.
     private func isStoppingPoint(_ snapshot: Snapshot) -> Bool {
-        mode != .bot || snapshot.phase == .setup || snapshot.turn == 0 || snapshot.outcome != nil
+        mode != .bot || snapshot.phase == .setup || snapshot.turn == humanSeat || snapshot.outcome != nil
     }
 
     private var undoTarget: Int? {
@@ -479,7 +525,7 @@ final class PhotonGame {
         online.showGames()
     }
 
-    /// Back to playing Amber. The online game carries on and can be reopened from the list.
+    /// Back to playing the bot. The online game carries on and can be reopened from the list.
     func leaveOnline() {
         online.close()
         mode = .bot
