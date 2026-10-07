@@ -563,6 +563,8 @@ final class PhotonGame: BoardModel {
         let me = GKLocalPlayer.local.displayName
         let message = if let outcome {
             outcome.winner == online.localSeat ? "\(me) won the game." : "You won against \(me)!"
+        } else if online.isRematch && actions.count == 1 {
+            "\(me) wants a rematch and placed the first source. Your turn."
         } else if last.isSetup {
             "\(me) placed a source. Your turn."
         } else {

@@ -36,6 +36,14 @@ struct GameHUDView: View {
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
             .glassEffect(.regular.tint(.gridUIElevated), in: RoundedRectangle(cornerRadius: 24))
+            // Kept apart from the error alert below, so one can't knock the other out.
+            .alert(game.online.invite?.title ?? "", isPresented: inviteShown, presenting: game.online.invite) { invite in
+                Button("Play") { game.online.accept(invite) }
+                    .keyboardShortcut(.defaultAction)
+                Button("Later", role: .cancel) {}
+            } message: { invite in
+                Text(invite.text)
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 24)
                     .strokeBorder(Color.gridRed, lineWidth: 1.5)
@@ -46,7 +54,7 @@ struct GameHUDView: View {
                 HStack(spacing: 6) {
                     if game.mode == .online ? game.online.isOver : game.outcome != nil {
                         hudButton(game.mode == .online ? "Rematch" : "New Game", systemImage: "arrow.clockwise",
-                                  enabled: true) { game.newGame() }
+                                  enabled: !game.online.isStartingRematch) { game.newGame() }
                     }
                     hudButton("Undo", systemImage: "arrow.uturn.backward", enabled: game.canUndo) { game.undo() }
                         .keyboardShortcut("z", modifiers: .command)
@@ -77,6 +85,10 @@ struct GameHUDView: View {
         Binding(get: { game.online.alert != nil }, set: { if !$0 { game.online.alert = nil } })
     }
 
+    private var inviteShown: Binding<Bool> {
+        Binding(get: { game.online.invite != nil }, set: { if !$0 { game.online.invite = nil } })
+    }
+
     private func hudButton(_ title: String, systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
@@ -99,6 +111,7 @@ struct GameHUDView: View {
                 Button("New Game", systemImage: "arrow.clockwise") { game.newGame() }
             } else if game.online.isOver {
                 Button("Rematch", systemImage: "arrow.clockwise") { game.newGame() }
+                    .disabled(game.online.isStartingRematch)
             } else {
                 Button("Resign", systemImage: "flag", role: .destructive) { game.online.resign() }
             }
