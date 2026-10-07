@@ -208,15 +208,15 @@ final class OnlineMatch: NSObject {
     }
 
     /// Picks up anything that happened while the app was in the background: turns in the
-    /// match on the board, a rematch the opponent started, and the badge.
+    /// match on the board, a rematch the opponent started, and games the opponent abandoned.
     func refresh() {
-        guard isAuthenticated else { return }
-        // Game Center's notifications are all caught up on once the app is open; the badge
-        // keeps count of the games still waiting.
+        // Game Center's notifications are all caught up on once the app is open.
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        clearBadge()
+        guard isAuthenticated else { return }
         Task {
             let matches = (try? await GKTurnBasedMatch.loadMatches()) ?? []
-            await setBadge(for: matches)
+            await closeForfeits(in: matches)
             // Mid-send, Game Center still has the turn before this one; loading it would roll
             // the board back until the send lands.
             guard let current = match, !isSending else { return }
@@ -303,7 +303,6 @@ final class OnlineMatch: NSObject {
             await load(match)
             return
         }
-        updateBadge()
     }
 
     /// Whether Game Center served the match on the board at an older turn than one already seen.
@@ -357,18 +356,27 @@ final class OnlineMatch: NSObject {
 
     // MARK: Badge
 
-    /// Game Center's turn notifications set the app's badge but never clear it, so the app keeps
-    /// it at the number of games waiting on this player.
-    private func updateBadge() {
-        Task {
-            guard let matches = try? await GKTurnBasedMatch.loadMatches() else { return }
-            await setBadge(for: matches)
-        }
+    /// Game Center's turn notifications set the app's badge to its own count of games waiting on
+    /// this player and never clear it, so the app does, whenever it opens or leaves the screen.
+    /// The games list shows what's waiting.
+    func clearBadge() {
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
     }
 
-    private func setBadge(for matches: [GKTurnBasedMatch]) async {
-        let waiting = matches.filter(isWaitingOnLocalPlayer).count
-        try? await UNUserNotificationCenter.current().setBadgeCount(waiting)
+    /// An opponent who resigns out of turn leaves the match open with this player to move, and
+    /// so in Game Center's count of games waiting on them, until it's closed as a win. The match
+    /// on the board is closed when it loads; this catches the rest.
+    private func closeForfeits(in matches: [GKTurnBasedMatch]) async {
+        for match in matches where isWaitingOnLocalPlayer(match) && match.matchID != self.match?.matchID {
+            let forfeited = match.participants.contains {
+                $0.player?.gamePlayerID != localID && [.quit, .timeExpired].contains($0.matchOutcome)
+            }
+            guard forfeited, let raw = try? await match.loadMatchData() else { continue }
+            for participant in match.participants where participant.matchOutcome == .none {
+                participant.matchOutcome = participant.player?.gamePlayerID == localID ? .won : .lost
+            }
+            try? await match.endMatchInTurn(withMatch: raw)
+        }
     }
 
     // MARK: Turns
@@ -489,7 +497,7 @@ final class OnlineMatch: NSObject {
     // MARK: Events
 
     private func turnEvent(_ match: GKTurnBasedMatch, didBecomeActive: Bool) {
-        updateBadge()
+        clearBadge()
         if match.matchID == self.match?.matchID {
             // The match on the board moved on. While a send is in flight this is likely its own
             // echo, and the send loads the match once it lands.
@@ -595,7 +603,7 @@ extension OnlineMatch: GKLocalPlayerListener {
     nonisolated func player(_ player: GKPlayer, matchEnded match: GKTurnBasedMatch) {
         nonisolated(unsafe) let match = match
         Task { @MainActor in
-            self.updateBadge()
+            self.clearBadge()
             if match.matchID == self.match?.matchID, !self.isSending { await self.load(match) }
         }
     }

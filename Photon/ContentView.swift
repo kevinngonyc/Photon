@@ -40,8 +40,15 @@ struct ContentView: View {
             if !hasOfferedTutorial && !hasCompletedTutorial && !hasDeclinedTutorial { offersTutorial = true }
             hasOfferedTutorial = true
         }
-        // Turns taken while the app was in the background arrive here.
-        .onChange(of: scenePhase) { if scenePhase == .active { game.online.refresh() } }
+        // Turns taken while the app was in the background arrive here. Anything that set the
+        // badge while the app was open is cleared on the way out too.
+        .onChange(of: scenePhase) {
+            switch scenePhase {
+            case .active: game.online.refresh()
+            case .background: game.online.clearBadge()
+            default: break
+            }
+        }
         .alert("Welcome to Photon", isPresented: $offersTutorial) {
             Button("Start Tutorial") { showsTutorial = true }
                 .keyboardShortcut(.defaultAction)
